@@ -1,0 +1,17 @@
+<Project>
+  <Sdk Name="Microsoft.NET.Sdk" />
+  <Sdk Name="ktsu.Sdk" />
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net9.0</TargetFrameworks>
+
+    <!-- LibraryImport's generated marshalling stubs are emitted inside an unsafe block, so the
+         source-generated P/Invokes for SetThreadExecutionState and IOKit require this. There is no
+         hand-written unsafe code in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Polyfill" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

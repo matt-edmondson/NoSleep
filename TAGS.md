@@ -1,0 +1,1 @@
+.NET;C#;dotnet;csharp;nosleep;no sleep;keep awake;keep-awake;stay awake;caffeine;caffeinate;insomnia;prevent sleep;sleep prevention;power management;display sleep;screensaver;idle;idle timeout;system tray;tray icon;notify icon;status item;cross platform;Avalonia;SetThreadExecutionState;IOKit;power assertion;systemd-inhibit;logind;screen saver inhibit;dotnet tool;global tool;CLI

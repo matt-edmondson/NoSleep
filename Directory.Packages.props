@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Avalonia" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Native" Version="12.1.2" />
+    <PackageVersion Include="ktsu.AppDataStorage" Version="1.17.6" />
+    <PackageVersion Include="Polyfill" Version="11.4.0" />
+  </ItemGroup>
+</Project>
