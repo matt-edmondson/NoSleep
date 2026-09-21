@@ -104,11 +104,15 @@ someone started to keep a machine awake should not die because a panel was missi
 ## Testing
 
 MSTest with Microsoft Testing Platform. `FakeSleepBlocker` stands in for the platform layer so
-`KeepAwakeControllerTests` can assert on acquire/release sequences anywhere. `ChildProcessHoldTests` uses
-`/bin/cat` and `/bin/false` rather than `systemd-inhibit`, because a build agent has no logind bus to take a
-real lock on; those cases report inconclusive off Unix. `PlatformIntegrationTests` checks the things that can
-only be asserted against the machine the tests are running on, including that the tray PNGs are embedded
-under the resource names `TrayIconAssets` resolves by string.
+`KeepAwakeControllerTests` can assert on acquire/release sequences anywhere. `PlatformIntegrationTests` checks
+the things that can only be asserted against the machine the tests are running on, including that the tray
+PNGs are embedded under the resource names `TrayIconAssets` resolves by string.
+
+`ChildProcessHoldTests` uses `/bin/cat` and `/bin/sh -c "exit 1"` rather than `systemd-inhibit`, because a
+build agent has no logind bus to take a real lock on; those cases report inconclusive off Unix. The exiting
+helper is spelled as a shell invocation on purpose: POSIX puts `sh` at `/bin/sh` on every Unix, while `false`
+is `/bin/false` on Linux and `/usr/bin/false` on macOS, so hardcoding the Linux path failed on macOS for the
+wrong reason - the helper could not be started at all, rather than starting and exiting.
 
 Verifying the Linux tray end to end needs a display and a status-notifier host on the session bus:
 
