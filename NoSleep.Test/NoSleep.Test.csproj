@@ -1,0 +1,20 @@
+<Project>
+  <Sdk Name="MSTest.Sdk" />
+  <Sdk Name="ktsu.Sdk" />
+
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+
+    <!-- CA1861: prefer static readonly fields over constant array arguments. Hoisting an assertion's
+         expected values into a field moves them away from the case that reads them, which costs more in a
+         test than the allocation it saves. -->
+    <NoWarn>$(NoWarn);CA1861</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NoSleep\NoSleep.csproj" />
+    <ProjectReference Include="..\NoSleep.Tool\NoSleep.Tool.csproj" />
+  </ItemGroup>
+</Project>
