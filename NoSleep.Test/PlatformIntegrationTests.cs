@@ -7,7 +7,6 @@ using System.Linq;
 using System.Reflection;
 using ktsu.NoSleep.Contracts;
 using ktsu.NoSleep.Platforms;
-using ktsu.NoSleep.Tool.Cli;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Tool = ktsu.NoSleep.Tool;
 
@@ -87,49 +86,11 @@ public class PlatformIntegrationTests
 		// The loader resolves these by string, so a moved or renamed asset only shows up as a tray icon that
 		// fails to draw at run time. Checking the resource names keeps that a build-time failure instead, and
 		// does not need a windowing system the way constructing a WindowIcon would.
-		Assembly toolAssembly = typeof(Tool.Tray.TrayIconAssets).Assembly;
+		Assembly toolAssembly = typeof(Tool.Program).Assembly;
 		string[] resources = toolAssembly.GetManifestResourceNames();
 
 		CollectionAssert.Contains(resources, "ktsu.NoSleep.Tool.Assets.tray-active.png");
 		CollectionAssert.Contains(resources, "ktsu.NoSleep.Tool.Assets.tray-idle.png");
-	}
-
-	[TestMethod]
-	public void Status_DescribesThisMachine()
-	{
-		using ISleepBlocker blocker = SleepBlockerFactory.Create();
-
-		string report = Tool.StatusReport.Build(blocker);
-
-		StringAssert.Contains(report, "Mechanism:", StringComparison.Ordinal);
-		StringAssert.Contains(report, blocker.Mechanism, StringComparison.Ordinal);
-		StringAssert.Contains(report, "Tray icon:", StringComparison.Ordinal);
-	}
-
-	[TestMethod]
-	public void Usage_DocumentsEveryOptionTheParserAccepts()
-	{
-		string usage = HelpText.Usage;
-
-		foreach (string option in new[] { "--tray", "--no-tray", "--display", "--off", "--for", "--reason", "--status", "--help", "--version" })
-		{
-			StringAssert.Contains(usage, option, StringComparison.Ordinal);
-		}
-	}
-
-	[TestMethod]
-	public void Version_ReportsTheToolName() =>
-		Assert.IsTrue(HelpText.Version.StartsWith("nosleep ", StringComparison.Ordinal), HelpText.Version);
-
-	[TestMethod]
-	public void DesktopSession_ExplanationAgreesWithAvailability()
-	{
-		string explanation = Tool.DesktopSession.Explanation;
-
-		Assert.AreEqual(
-			Tool.DesktopSession.IsAvailable,
-			explanation.StartsWith("available", StringComparison.Ordinal),
-			explanation);
 	}
 
 	[TestMethod]

@@ -2,154 +2,162 @@
 
 namespace ktsu.NoSleep.Tool;
 
-using System;
-using System.Diagnostics.CodeAnalysis;
-using Avalonia;
+using System.Threading.Tasks;
+using ktsu.Essentials;
+using ktsu.Essentials.FileSystemProviders.Native;
+using ktsu.Essentials.PersistenceProviders.ConfigHome;
+using ktsu.Essentials.SerializationProviders.Json;
 using ktsu.NoSleep.Contracts;
-using ktsu.NoSleep.Tool.Cli;
-using ktsu.NoSleep.Tool.Tray;
+using ktsu.NoSleep.Platforms;
+using ktsu.TrayApp;
 
 /// <summary>
 /// Entry point for the <c>nosleep</c> .NET tool.
 /// </summary>
+/// <remarks>
+/// Everything that is not specific to keeping a machine awake - the tray host, the tray-versus-console
+/// decision and its fallback, Ctrl+C and <c>SIGTERM</c>, the <c>--for</c> timer, the standard flags, the
+/// <c>--status</c> report, and remembering what the tray was left set to - belongs to
+/// <c>ktsu.TrayApp</c>. What is left here is the menu, the three switches NoSleep adds, and the wiring
+/// between them and <see cref="KeepAwakeController"/>.
+/// </remarks>
 internal static class Program
 {
-	private const int ExitSuccess = 0;
-	private const int ExitFailure = 1;
-	private const int ExitUsage = 2;
-
-	/// <summary>Set to <c>1</c> to print the full exception behind a tray failure.</summary>
-	private const string DebugEnvironmentVariable = "NOSLEEP_DEBUG";
-
 	/// <summary>
 	/// Runs the tool.
 	/// </summary>
 	/// <param name="args">Command line arguments.</param>
 	/// <returns>0 on success, 1 when the platform refused, 2 when the command line was wrong.</returns>
-	internal static int Main(string[] args)
+	private static async Task<int> Main(string[] args)
 	{
-		if (!CommandLineParser.TryParse(args, out CommandLineOptions options, out string error))
+		// The whole persistence wiring: a serializer, a file system, and a directory convention.
+		// ktsu.TrayApp takes the IPersistenceProvider<string> that falls out of it and nothing else, so
+		// where NoSleep's settings live is NoSleep's decision rather than the library's.
+		IPersistenceProvider<string> preferences = new ConfigHomePersistenceProvider<string>(
+			new NativeFileSystemProvider(),
+			new JsonSerializationProvider(),
+			"nosleep",
+			string.Empty);
+
+		// The blocker is created here rather than left to the controller so that --status can ask it
+		// whether this machine can keep the display lit, which is a Linux-only distinction the controller
+		// has no reason to carry. Declared first, so the controller is disposed before it.
+		using ISleepBlocker blocker = SleepBlockerFactory.Create();
+		using KeepAwakeController controller = new(blocker);
+
+		// What the user has asked for, which is not yet what the controller is doing: the toggle's setter,
+		// --off, and the remembered tray state all land here before the run starts, and OnStart is what
+		// turns the intent into a held inhibitor. Enabling straight from the setter instead would leave
+		// OnStart to override a remembered "off" - or an explicit --off - a moment later.
+		bool keepAwakeWanted = true;
+		bool started = false;
+
+		void SetKeepAwake(bool value)
 		{
-			Console.Error.WriteLine($"nosleep: {error}");
-			Console.Error.WriteLine();
-			Console.Error.WriteLine(HelpText.Usage);
-			return ExitUsage;
+			keepAwakeWanted = value;
+
+			if (started)
+			{
+				ApplyKeepAwake(controller, value);
+			}
 		}
 
-		if (options.ShowHelp)
+		void Start()
 		{
-			Console.WriteLine(HelpText.Usage);
-			return ExitSuccess;
-		}
+			started = true;
 
-		if (options.ShowVersion)
-		{
-			Console.WriteLine(HelpText.Version);
-			return ExitSuccess;
-		}
-
-		if (options.ShowStatus)
-		{
-			using ISleepBlocker blocker = SleepBlockerFactory.Create();
-			Console.WriteLine(StatusReport.Build(blocker));
-			return blocker.IsSupported ? ExitSuccess : ExitFailure;
-		}
-
-		return UseTray(options) ? RunTray(options) : RunConsole(options);
-	}
-
-	/// <summary>
-	/// Decides between the tray and the console.
-	/// </summary>
-	/// <remarks>
-	/// <c>--no-tray</c> always wins, and <c>--tray</c> overrides the detection for the machines where it
-	/// guesses wrong - a working D-Bus status-notifier host with no <c>DISPLAY</c> set, say. Otherwise the
-	/// tray is the default wherever there is a session to put it in.
-	/// </remarks>
-	private static bool UseTray(CommandLineOptions options)
-	{
-		if (options.TraySuppressed)
-		{
-			return false;
-		}
-
-		return options.TrayRequested || DesktopSession.IsAvailable;
-	}
-
-	private static int RunConsole(CommandLineOptions options)
-	{
-		using KeepAwakeController controller = new();
-		controller.SetRequest(options.ToRequest());
-		return ConsoleRunner.Run(controller, options);
-	}
-
-	[SuppressMessage(
-		"Design",
-		"CA1031:Do not catch general exception types",
-		Justification = "Any failure to bring up a tray icon is recoverable by falling back to the console, and the windowing backends do not report those failures through a common exception type.")]
-	private static int RunTray(CommandLineOptions options)
-	{
-		// Get() is the singleton the static QueueSave/SaveIfRequired helpers write back, so the tray has to
-		// mutate that instance rather than a private LoadOrCreate() copy.
-		TrayPreferences preferences = TrayPreferences.Get();
-
-		// An explicit switch beats what the tray remembered; without one, the tray comes back the way it was
-		// left.
-		bool keepDisplayAwake = options.KeepDisplayAwake || preferences.KeepDisplayAwake;
-		bool startEnabled = !options.StartDisabled && preferences.KeepAwake;
-
-		using KeepAwakeController controller = new();
-		controller.SetRequest(options.ToRequest() with { KeepDisplayAwake = keepDisplayAwake });
-
-		if (startEnabled)
-		{
-			try
+			if (keepAwakeWanted)
 			{
 				controller.Enable();
 			}
-			catch (Exception ex) when (ex is SleepBlockException or PlatformNotSupportedException)
-			{
-				// Not fatal: the tray still comes up so the user can see why, and try again once whatever was
-				// missing is installed.
-				Console.Error.WriteLine($"nosleep: {ex.Message}");
-			}
 		}
 
-		TrayApplication? app = null;
+		return await TrayAppBuilder.Create("nosleep")
+			.DisplayName("NoSleep")
+			.Summary("keep this machine awake.")
+			.Icons(typeof(Program).Assembly, "Assets.tray-active.png", "Assets.tray-idle.png")
+			.Status(() => Describe(controller))
+			.Status("Mechanism", () => controller.Mechanism)
+			.Status("Keep awake", () => controller.IsSupported ? "supported" : "not supported on this machine")
+			.Status("Keep display", () => DescribeDisplaySupport(blocker))
+			.Toggle(
+				"Keep awake",
+				() => controller.IsActive,
+				SetKeepAwake,
+				() => controller.IsSupported,
+				persistAs: "keep-awake")
+			.Toggle(
+				"Keep display awake too",
+				() => controller.KeepDisplayAwake,
+				controller.SetKeepDisplayAwake,
+				() => controller.IsSupported,
+				persistAs: "keep-display-awake")
+			.Flag(["-d", "--display"], "Keep the display lit as well, not just the system awake.", () => controller.SetKeepDisplayAwake(true))
+			.Flag(["-o", "--off"], "Start with keep-awake switched off.", () => keepAwakeWanted = false)
+			.Option(
+				["-r", "--reason"],
+				"text",
+				"Reason recorded with the inhibitor, shown by the platform's own\ntooling (pmset -g assertions, systemd-inhibit --list).",
+				reason => controller.SetRequest(controller.Request with { Reason = reason }))
+			.RefreshOn(refresh => controller.StateChanged += (_, _) => refresh())
+			.OnStart(Start)
+			.OnStop(controller.Disable)
+			.Preferences(preferences)
+			.RunAsync(args)
+			.ConfigureAwait(false);
+	}
 
-		try
+	private static void ApplyKeepAwake(KeepAwakeController controller, bool keepAwake)
+	{
+		if (keepAwake)
 		{
-			// StartWithClassicDesktopLifetime blocks until the tray quits, so the using above covers the
-			// controller for the whole run.
-			return AppBuilder.Configure(() => app = new TrayApplication(controller, preferences, options.Duration))
-				.UsePlatformDetect()
-				.With(new MacOSPlatformOptions { ShowInDock = false })
-				.StartWithClassicDesktopLifetime([], Avalonia.Controls.ShutdownMode.OnExplicitShutdown);
+			controller.Enable();
 		}
-		catch (Exception ex)
+		else
 		{
-			if (Environment.GetEnvironmentVariable(DebugEnvironmentVariable) == "1")
-			{
-				Console.Error.WriteLine(ex.ToString());
-			}
-
-			// The tray already ran and quit; this is Avalonia's teardown throwing after the fact (see
-			// TrayApplication.HasStarted). Restarting in the terminal here would keep the machine awake after
-			// the user asked NoSleep to stop.
-			if (app?.HasStarted == true)
-			{
-				return ExitSuccess;
-			}
-
-			// Otherwise the windowing stack refused after the session check passed - a DISPLAY pointing at
-			// nothing, a missing libX11, no status-notifier host on the bus - and it reports those as plain
-			// exceptions of whatever type the backend felt like (X11 throws Exception("XOpenDisplay failed")).
-			// There is no useful list to filter on, and every one of them means the same thing here: no tray,
-			// so use the terminal. Letting it escape instead would kill a process the user asked to keep
-			// their machine awake.
-			Console.Error.WriteLine($"nosleep: could not show a tray icon ({ex.Message}). Staying in the terminal instead.");
-			controller.Dispose();
-			return RunConsole(options);
+			controller.Disable();
 		}
+	}
+
+	/// <summary>
+	/// Says what NoSleep is doing, for the menu's status line, the tray tooltip, and the <c>State</c> row of
+	/// <c>--status</c>.
+	/// </summary>
+	/// <param name="controller">The controller being driven.</param>
+	/// <returns>The sentence to show.</returns>
+	/// <remarks>
+	/// A refusal is not described here: <c>ktsu.TrayApp</c> keeps the last failure's message and puts it in
+	/// the status line itself, because the refresh that runs after every action would overwrite anything
+	/// written straight into the menu.
+	/// </remarks>
+	private static string Describe(KeepAwakeController controller)
+	{
+		if (!controller.IsSupported)
+		{
+			return $"NoSleep cannot keep this machine awake ({controller.Mechanism})";
+		}
+
+		if (!controller.IsActive)
+		{
+			return "NoSleep is off - this machine may sleep";
+		}
+
+		return controller.KeepDisplayAwake
+			? "Keeping system and display awake"
+			: "Keeping system awake";
+	}
+
+	private static string DescribeDisplaySupport(ISleepBlocker blocker)
+	{
+		if (!blocker.IsSupported)
+		{
+			return "not supported on this machine";
+		}
+
+		// Windows and macOS keep the screen lit through the same call that keeps the system awake. Linux
+		// splits the two, and a box with only a logind lock can do one and not the other.
+		return OperatingSystem.IsLinux() && blocker is LinuxSleepBlocker linux && !linux.SupportsDisplay
+			? "not supported (needs gnome-session-inhibit)"
+			: "supported";
 	}
 }

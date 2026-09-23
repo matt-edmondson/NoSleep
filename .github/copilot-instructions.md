@@ -10,7 +10,7 @@ and falls back to a headless console mode on machines with no desktop session.
 
 - Native inhibitors on every platform, not input faking: `SetThreadExecutionState`, IOKit power assertions,
   and logind or GNOME session inhibitors
-- One tray icon and menu across `Shell_NotifyIcon`, `NSStatusItem`, and StatusNotifierItem, via Avalonia
+- One tray icon and menu across `Shell_NotifyIcon`, `NSStatusItem`, and StatusNotifierItem, via `ktsu.TrayApp`
 - Separate control over system sleep and display sleep
 - Headless mode with Ctrl+C and `SIGTERM` handling, and an optional duration after which NoSleep exits
 - `nosleep --status` reports what the current machine actually supports
@@ -31,10 +31,8 @@ NoSleep/
 ├── NoSleep/               # Core library (ktsu.NoSleep), no UI dependencies
 │   ├── Contracts/         # ISleepBlocker
 │   └── Platforms/         # Per-platform inhibitors and their helpers
-├── NoSleep.Tool/          # The nosleep command (ktsu.NoSleep.Tool)
-│   ├── Assets/            # Generated tray icons, embedded as resources
-│   ├── Cli/               # Argument parsing, duration parsing, usage text
-│   └── Tray/              # Avalonia tray application
+├── NoSleep.Tool/          # The nosleep command (ktsu.NoSleep.Tool): one Program.cs
+│   └── Assets/            # Generated tray icons, embedded as resources
 ├── NoSleep.Test/          # MSTest suite
 └── scripts/               # Icon generation
 ```
@@ -55,7 +53,8 @@ NoSleep/
   that set it
 - `ChildProcessHold` must keep the helper's standard input pipe open, so a killed NoSleep releases its
   Linux inhibitor rather than orphaning it
-- `TrayApplication.HasStarted` distinguishes an Avalonia teardown exception from a tray that never came up;
-  removing it makes a clean quit restart in the console with the machine still awake
-- `_TrimToolRuntimeAssets` in `NoSleep.Tool.csproj` keeps the tool package to 50 MB rather than 190 MB;
-  removing it ships SkiaSharp natives and debug symbols for every RID
+- `Program` holds the user's keep-awake intent in a local `bool` and only acts on it in `OnStart`: a
+  toggle setter that enabled directly would be overridden by `OnStart` a moment later, so `--off` and a
+  remembered "off" would both stop working
+- The tool package stays at 50 MB rather than 190 MB because `ktsu.TrayApp`'s `build/` props trim the
+  per-RID SkiaSharp natives and their debug symbols; `TrayAppTrimToolRuntimeAssets=false` turns that off
