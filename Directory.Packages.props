@@ -3,10 +3,11 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Avalonia" Version="12.1.2" />
-    <PackageVersion Include="Avalonia.Desktop" Version="12.1.2" />
-    <PackageVersion Include="Avalonia.Native" Version="12.1.2" />
-    <PackageVersion Include="ktsu.AppDataStorage" Version="1.17.6" />
+    <PackageVersion Include="ktsu.Essentials" Version="2.6.5" />
+    <PackageVersion Include="ktsu.Essentials.FileSystemProviders.Native" Version="2.6.5" />
+    <PackageVersion Include="ktsu.Essentials.PersistenceProviders.ConfigHome" Version="2.6.5" />
+    <PackageVersion Include="ktsu.Essentials.SerializationProviders.Json" Version="2.6.5" />
+    <PackageVersion Include="ktsu.TrayApp" Version="1.1.1" />
     <PackageVersion Include="Polyfill" Version="11.4.0" />
   </ItemGroup>
 </Project>

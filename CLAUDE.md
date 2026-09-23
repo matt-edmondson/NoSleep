@@ -54,28 +54,27 @@ This is a .NET tool (`ktsu.NoSleep.Tool`, installed as the `nosleep` command) wi
 - `NoSleep/Platforms/LinuxSleepBlocker.cs` - `systemd-inhibit` and `gnome-session-inhibit` as child processes
 - `NoSleep/Platforms/ChildProcessHold.cs` - The helper-process lifetime used by the Linux blocker
 - `NoSleep/Platforms/ExecutableLocator.cs` - `PATH` lookup, so support can be reported without a process launch
-- `NoSleep.Tool/Program.cs` - Argument dispatch and the tray/console decision
-- `NoSleep.Tool/Cli/` - Hand-written argument parsing, duration parsing, and the usage text
-- `NoSleep.Tool/Tray/TrayApplication.cs` - The Avalonia tray icon and its native menu
-- `NoSleep.Tool/Tray/TrayIconAssets.cs` - Loads the two embedded tray PNGs
-- `NoSleep.Tool/ConsoleRunner.cs` - The headless mode, including Ctrl+C and `SIGTERM` handling
-- `NoSleep.Tool/StatusReport.cs` - The text behind `nosleep --status`
+- `NoSleep.Tool/Program.cs` - The whole tool: the menu, the three flags NoSleep adds, the `--status` rows,
+  and the wiring between them and `KeepAwakeController`, described to `ktsu.TrayApp`'s `TrayAppBuilder`
 - `scripts/generate-icons.py` - Draws `NoSleep.Tool/Assets/*.png` and the repository's `icon.png`
 
 ### Dependencies
 
-- **Avalonia / Avalonia.Desktop / Avalonia.Native** - The only cross-platform tray icon API that covers
-  `Shell_NotifyIcon`, `NSStatusItem`, and StatusNotifierItem from one codebase. `Avalonia.Native` is
-  referenced directly for `MacOSPlatformOptions`, which keeps the tray app out of the macOS dock
-- **ktsu.AppDataStorage** - Persists the tray's remembered state
+- **ktsu.TrayApp** - The tray host and everything around it: the Avalonia tray icon, the tray-versus-console
+  decision and its fallback, Ctrl+C and `SIGTERM`, the `--for` timer, the standard flags, the `--status`
+  report, debounced preference persistence, and the MSBuild props that trim the tool payload. All of it was
+  extracted from this repository; Avalonia arrives through it and is not referenced here
+- **ktsu.Essentials + the ConfigHome / Json / Native providers** - The persistence stack behind the tray's
+  remembered state. `ktsu.TrayApp` takes `IPersistenceProvider<string>` and nothing else, so where the
+  settings live (`nosleep/tray.json` under the config home) is this tool's choice, assembled in `Program`
 - **Polyfill** - Required by KTSU0001 for non-test projects; also supplies `Ensure.NotNull`
 
 ## Architecture
 
 The split is deliberate: `ISleepBlocker` implementations know how to take and drop one platform inhibitor
-and nothing else, `KeepAwakeController` owns whether one *should* be held, and the tool's two front ends -
-the tray and the console runner - only drive the controller. Nothing in `NoSleep` references Avalonia, so
-the library is usable from a service or a test without a windowing stack.
+and nothing else, `KeepAwakeController` owns whether one *should* be held, and the tool only describes a
+menu over the controller to `ktsu.TrayApp`. Nothing in `NoSleep` references Avalonia, so the library is
+usable from a service or a test without a windowing stack.
 
 ```csharp
 using KeepAwakeController controller = new();
@@ -91,22 +90,23 @@ Three platform details are load-bearing and easy to undo by accident:
 - **Linux**: inhibitor locks belong to a process, so `ChildProcessHold` keeps the helper's standard input
   pipe open. When NoSleep dies the pipe closes, the helper reaches end of input, and the lock goes with it -
   without that, a `kill -9` would orphan an inhibitor with nothing left to release it.
-- **Linux tray**: Avalonia's `DBusTrayIconImpl.WatchAsync` is `async void` with an exception filter that
-  stops applying once the icon is disposed, so an ordinary shutdown can throw a `TaskCanceledException` out
-  of the run loop *after* the tray has done its job. `TrayApplication.HasStarted` is how `Program.RunTray`
-  tells that apart from a tray that never came up; without it, a clean quit would restart in the console and
-  keep the machine awake.
+- **Linux tray**: Avalonia's teardown throws after a perfectly ordinary shutdown, and a tray that never came
+  up has to fall back to the console instead of killing the process. Both now belong to `ktsu.TrayApp`,
+  whose CLAUDE.md lists them under "Load-bearing behaviour" - the tray decision (`--no-tray` wins, then
+  `--tray`, then `DesktopSession.IsAvailable`) and the fallback are its rules now, not this repository's.
 
-The tray decision in `Program.UseTray` is: `--no-tray` wins, then `--tray`, then `DesktopSession.IsAvailable`.
-If the windowing stack still refuses, the run falls back to the console rather than exiting - a process
-someone started to keep a machine awake should not die because a panel was missing.
+One thing here is load-bearing and easy to undo by accident. `Program` keeps *whether the user wants to be
+kept awake* in a local `bool` rather than calling `Enable()` from the toggle's setter, because a run applies
+the remembered preferences first, then the command line, and only then `OnStart`. A setter that enabled
+directly would have `OnStart` override an explicit `--off`, or a remembered "off", a moment later.
 
 ## Testing
 
 MSTest with Microsoft Testing Platform. `FakeSleepBlocker` stands in for the platform layer so
 `KeepAwakeControllerTests` can assert on acquire/release sequences anywhere. `PlatformIntegrationTests` checks
 the things that can only be asserted against the machine the tests are running on, including that the tray
-PNGs are embedded under the resource names `TrayIconAssets` resolves by string.
+PNGs are embedded under the resource names `TrayIconSet` resolves by string - the names are passed to
+`ktsu.TrayApp` as strings, so a renamed asset is otherwise a run-time failure on a machine with a display.
 
 `ChildProcessHoldTests` uses `/bin/cat` and `/bin/sh -c "exit 1"` rather than `systemd-inhibit`, because a
 build agent has no logind bus to take a real lock on; those cases report inconclusive off Unix. The exiting
@@ -114,21 +114,30 @@ helper is spelled as a shell invocation on purpose: POSIX puts `sh` at `/bin/sh`
 is `/bin/false` on Linux and `/usr/bin/false` on macOS, so hardcoding the Linux path failed on macOS for the
 wrong reason - the helper could not be started at all, rather than starting and exiting.
 
-Verifying the Linux tray end to end needs a display and a status-notifier host on the session bus:
+Verifying the Linux tray end to end needs a display and a status-notifier host on the session bus.
+`ktsu.TrayApp` ships both halves of that rig in its `scripts/` directory:
 
 ```bash
+pip install dbus-next
 eval "$(dbus-launch --sh-syntax)"
-# ... start a StatusNotifierWatcher on the bus ...
-xvfb-run -a dotnet run --project NoSleep.Tool -- --tray --for 5s
+python3 scripts/status-notifier-watcher.py > watcher.log 2>&1 &
+xvfb-run -a env DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+  dotnet run --project NoSleep.Tool -- --tray --for 5s
+python3 scripts/click-tray-menu.py "$(grep -o 'org.kde.StatusNotifierItem-[0-9-]*' watcher.log | head -1)" "Keep awake"
 ```
+
+Success is the watcher logging a registered item, the run lasting the full window and exiting 0, and the
+click flipping the entry's checked state with the status line re-reading itself.
 
 ## Packaging
 
-`NoSleep.Tool.csproj` trims the tool payload in `_TrimToolRuntimeAssets`. A `DotnetTool` package is
-RID-agnostic, so without it SkiaSharp's native assets ship for every RID it supports, plus their debug
-symbols - 190 MB against the current 50 MB. `NoSleepToolRuntimeIdentifiers` lists the runtimes that keep
-their native assets; anything else falls back to the console mode, which needs none. Adding a RID back is a
-one-line change there.
+The tool payload is trimmed by `build/ktsu.TrayApp.props` and `.targets`, which arrive with the
+`ktsu.TrayApp` package and are imported into any project referencing it. A `DotnetTool` package is
+RID-agnostic, so without them SkiaSharp's native assets ship for every RID it supports, plus their debug
+symbols: 190 MB against the current 50 MB, measured here with
+`dotnet pack NoSleep.Tool/NoSleep.Tool.csproj -c Release -p:TrayAppTrimToolRuntimeAssets=false`.
+`TrayAppToolRuntimeIdentifiers` lists the runtimes that keep their native assets; anything else falls back
+to the console mode, which needs none. Adding a RID back is a one-line property in this project.
 
 ## CI/CD
 

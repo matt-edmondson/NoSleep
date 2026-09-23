@@ -3,24 +3,20 @@
   <Sdk Name="ktsu.Sdk" />
   <Sdk Name="ktsu.Sdk.Tool" />
 
-  <PropertyGroup>
-    <!-- The tool payload is a shipped artifact, not a debugging session: the native debug symbols that
-         come with SkiaSharp and HarfBuzzSharp are 245 MB on their own, and the XML docs for every
-         Avalonia assembly are dead weight next to them. Both default to true in ktsu.Sdk, which is right
-         for a library's output directory and wrong here. -->
-    <CopyDebugSymbolFilesFromPackages>false</CopyDebugSymbolFilesFromPackages>
-    <CopyDocumentationFilesFromPackages>false</CopyDocumentationFilesFromPackages>
-  </PropertyGroup>
-
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
-    <PackageReference Include="Avalonia.Desktop" />
+    <!-- The tray host, the console fallback, the standard flags, and the packaging props that trim the
+         per-RID SkiaSharp natives out of this tool's payload - all of which used to live in this
+         project. Avalonia arrives through it, and is not referenced here because nothing here touches
+         it any more. -->
+    <PackageReference Include="ktsu.TrayApp" />
 
-    <!-- Referenced directly for MacOSPlatformOptions, which keeps the tray app out of the macOS dock.
-         Avalonia.Desktop already brings it in transitively; KTSU0006 wants the dependency declared. -->
-    <PackageReference Include="Avalonia.Native" />
+    <!-- The persistence stack is assembled here rather than inside ktsu.TrayApp: the library takes
+         IPersistenceProvider<string> and nothing else, so a tool picks where its settings live. -->
+    <PackageReference Include="ktsu.Essentials" />
+    <PackageReference Include="ktsu.Essentials.FileSystemProviders.Native" />
+    <PackageReference Include="ktsu.Essentials.PersistenceProviders.ConfigHome" />
+    <PackageReference Include="ktsu.Essentials.SerializationProviders.Json" />
 
-    <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="Polyfill" PrivateAssets="all" />
   </ItemGroup>
 
@@ -29,44 +25,9 @@
   </ItemGroup>
 
   <!-- The tray icons are loaded through Assembly.GetManifestResourceStream rather than
-       AvaloniaResource: the app builds its UI in code and never loads XAML, so pulling in the
+       AvaloniaResource: the tray builds its menu in code and never loads XAML, so pulling in the
        Avalonia resource pipeline for two PNGs would be the only reason it needed one. -->
   <ItemGroup>
     <EmbeddedResource Include="Assets/*.png" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <!-- Runtimes the tool ships native assets for. A dotnet tool package is RID-agnostic, so every RID
-         SkiaSharp supports rides along by default - Android bionic, loongarch, riscv and the rest - and
-         each one is a ~10 MB copy of Skia in a package downloaded by people running desktops. Leading and
-         trailing semicolons let Contains() match a whole entry rather than a prefix.
-
-         Musl is left out on purpose: Alpine is a container distribution, where there is no tray to show an
-         icon in and the console mode - which needs no native assets at all - is the whole of what NoSleep
-         does. Any other runtime falls back the same way, and adding a RID back is a one-line change here. -->
-    <NoSleepToolRuntimeIdentifiers>;win-x64;win-x86;win-arm64;osx;osx-x64;osx-arm64;linux-x64;linux-arm64;linux-arm;</NoSleepToolRuntimeIdentifiers>
-  </PropertyGroup>
-
-  <Target Name="_TrimToolRuntimeAssets" AfterTargets="ComputeResolvedFilesToPublishList">
-    <ItemGroup>
-      <_ToolAsset Include="@(ResolvedFileToPublish)">
-        <NormalizedPath>$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Replace('\','/'))</NormalizedPath>
-      </_ToolAsset>
-
-      <!-- Only files under runtimes/ have a RID segment to read, so the Split is guarded by the filter
-           rather than being applied to every file in the payload. -->
-      <_ToolRuntimeAsset Include="@(_ToolAsset)" Condition="$([System.String]::Copy('%(_ToolAsset.NormalizedPath)').StartsWith('runtimes/'))">
-        <Rid>$([System.String]::Copy('%(_ToolAsset.NormalizedPath)').Split('/')[1])</Rid>
-      </_ToolRuntimeAsset>
-
-      <_ToolRuntimeAssetToDrop Include="@(_ToolRuntimeAsset)" Condition="!$(NoSleepToolRuntimeIdentifiers.Contains(';%(_ToolRuntimeAsset.Rid);'))" />
-
-      <!-- The native debug symbols ride in as content rather than as symbol files, so
-           CopyDebugSymbolFilesFromPackages above does not reach them: libSkiaSharp.pdb alone is 80 MB per
-           Windows RID. Nothing can step into these from an installed tool anyway. -->
-      <_ToolRuntimeAssetToDrop Include="@(_ToolRuntimeAsset)" Condition="$([System.String]::Copy('%(_ToolRuntimeAsset.NormalizedPath)').EndsWith('.pdb'))" />
-
-      <ResolvedFileToPublish Remove="@(_ToolRuntimeAssetToDrop)" />
-    </ItemGroup>
-  </Target>
 </Project>

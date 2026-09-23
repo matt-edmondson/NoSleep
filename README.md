@@ -22,6 +22,10 @@ operating system knows what is happening and its own tooling can report it. On a
 session, the same command falls back to a headless console mode that a script, a CI agent, or a systemd
 unit can use.
 
+The library here is the inhibitor layer. The tray icon, the tray-versus-terminal decision, the standard
+flags and the signal handling around them come from [`ktsu.TrayApp`](https://github.com/ktsu-dev/TrayApp),
+which was extracted from this tool.
+
 ## Features
 
 - **Real inhibitors, not input faking**: `SetThreadExecutionState` on Windows, IOKit power assertions on
@@ -37,8 +41,8 @@ unit can use.
   awake forever.
 - **Nothing left behind**: the inhibitor is released on exit, and the Linux helper process is tied to
   NoSleep's own lifetime so a kill -9 releases the lock rather than orphaning it.
-- **Remembered state**: the tray comes back the way it was left, while an explicit command line argument
-  always wins.
+- **Remembered state**: the tray comes back the way it was left - stored under the user's config home as
+  `nosleep/tray.json` - while an explicit command line argument always wins.
 - **Honest about what it can do**: `nosleep --status` says which mechanism is available on this machine,
   whether the display can be kept lit, and whether a tray icon is possible.
 
@@ -109,10 +113,11 @@ nosleep --status
 ```
 nosleep 1.0.0
 Platform:      Ubuntu 24.04.4 LTS (ubuntu.24.04-x64)
+Tray icon:     available (DISPLAY or WAYLAND_DISPLAY is set)
+State:         NoSleep is off - this machine may sleep
 Mechanism:     systemd-inhibit + gnome-session-inhibit
 Keep awake:    supported
 Keep display:  supported
-Tray icon:     available (DISPLAY or WAYLAND_DISPLAY is set)
 ```
 
 ### Options
@@ -122,8 +127,8 @@ Tray icon:     available (DISPLAY or WAYLAND_DISPLAY is set)
 | `-t`, `--tray` | Show the tray icon even if no desktop session was detected. |
 | `--no-tray` | Stay in the terminal; never show a tray icon. |
 | `-d`, `--display` | Keep the display lit as well, not just the system awake. |
-| `-o`, `--off` | Start with keep-awake switched off (tray only). |
-| `-f`, `--for <duration>` | Release and exit after a duration: `45s`, `90m`, `2h`, `1h30m`. A bare number means minutes. |
+| `-o`, `--off` | Start with keep-awake switched off. |
+| `-f`, `--for <duration>` | Stop and exit after a duration: `45s`, `90m`, `2h`, `1h30m`. A bare number means minutes. |
 | `-r`, `--reason <text>` | Reason recorded with the inhibitor, shown by the platform's own tooling. |
 | `-s`, `--status` | Print what NoSleep can do on this machine, then exit. |
 | `-h`, `--help` | Show usage, then exit. |
@@ -133,7 +138,10 @@ With neither `--tray` nor `--no-tray`, NoSleep shows a tray icon when the sessio
 and stays in the terminal when it does not. If the windowing stack refuses after that check passes, it says
 so and carries on in the terminal rather than exiting with the machine left awake.
 
-Set `NOSLEEP_DEBUG=1` to print the full exception behind a tray failure.
+`--status` describes the machine and exits 0 whether or not an inhibitor is available; read the
+`Keep awake:` row rather than the exit code to tell those apart.
+
+Set `TRAYAPP_DEBUG=1` to print the full exception behind a tray failure.
 
 ## Usage Examples
 
